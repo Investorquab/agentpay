@@ -150,9 +150,8 @@ export function WalletSetup({
           <PollarWalletOption onSigner={onReady} />
         ) : (
           <div className="text-xs dim-text leading-relaxed panel-raised px-3 py-2.5">
-            Add <span className="mono">NEXT_PUBLIC_POLLAR_API_KEY</span> to{" "}
-            <span className="mono">.env.local</span> (from dashboard.pollar.xyz) to enable real
-            wallet login. The demo keypair works fully without it.
+            Add <span className="mono">NEXT_PUBLIC_POLLAR_PUBLISHABLE_KEY</span> to{" "}
+            <span className="mono">.env</span> to enable real wallet login. The demo keypair works fully without it.
           </div>
         ))}
     </div>

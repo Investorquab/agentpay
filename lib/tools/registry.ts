@@ -42,7 +42,12 @@ async function fetchUrl(value: string) {
   const response = await fetch(url, { redirect: "follow", cache: "no-store", headers: { "user-agent": "AgentPay/0.1" } });
   if (!response.ok) throw new Error(`URL returned HTTP ${response.status}`);
   const raw = await response.text();
-  const content = raw.replace(/<script[\\s\\S]*?<\\/script>/gi, " ").replace(/<style[\\s\\S]*?<\\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim();
+  const content = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return { url: url.toString(), status: response.status, contentType: response.headers.get("content-type") ?? "", content: content.slice(0, 5000), truncated: content.length > 5000, fetchedAt: new Date().toISOString() };
 }
 
@@ -59,8 +64,8 @@ export async function runTool(id: ToolId, input: Record<string, string>) {
     case "url": return fetchUrl(required(input, "url"));
     case "wordcount": {
       const text = input.text || "";
-      const words = text.trim() ? text.trim().split(/\\s+/).length : 0;
-      const sentences = text.trim() ? (text.match(/[.!?]+(?=\\s|$)/g) ?? []).length : 0;
+      const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+      const sentences = text.trim() ? (text.match(/[.!?]+(?=\s|$)/g) ?? []).length : 0;
       return { words, chars: text.length, sentences, readingTimeSec: Math.max(1, Math.round((words / 200) * 60)) };
     }
   }

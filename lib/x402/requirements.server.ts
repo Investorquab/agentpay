@@ -13,7 +13,7 @@ const scheme = new ExactStellarServerScheme();
  */
 export async function buildRequirements(tool: ToolDefinition): Promise<PaymentRequirements> {
   if (!RECEIVING_ADDRESS) {
-    throw new Error("RECEIVING_ADDRESS is not set in .env.local");
+    throw new Error("RECEIVING_ADDRESS is not set in .env");
   }
 
   const base: PaymentRequirements = {

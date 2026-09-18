@@ -1,143 +1,106 @@
 # AgentPay
 
-An AI agent with its own non-custodial wallet, paying per request over
-**x402** on **Stellar**, built for the Pollar hackathon.
+**Give an AI agent spending power without giving it your private key.**
 
-## The idea
+AgentPay is a Pollar + Stellar application that lets an agent buy useful services over **x402** using USDC. The human controls the wallet and spending policy; the agent handles the payment flow.
 
-Every existing x402 agent wallet on Stellar holds a raw secret key
-(`S...`) in an environment variable. That is the entire threat model
-of "AI agent with money": if the process or the box is compromised,
-the funds are gone, and the human who owns the money has no way to
-see or revoke what the agent is doing.
+## What the demo proves
 
-AgentPay's agent wallet is a real **Pollar** embedded wallet instead.
-The human owner logs in once (Google, passkey, email OTP), Pollar
-holds a DPoP-bound session, and the agent signs Soroban authorization
-entries through that session, never a private key. The owner can
-revoke the session from any device at any time
-(`client.logoutEverywhere()`), and every payment is a real, on-chain,
-inspectable Stellar transaction.
+1. A Pollar embedded Stellar wallet authenticates the owner.
+2. The agent requests a paid service.
+3. The service returns a standard HTTP **402 Payment Required** response.
+4. `@x402/stellar` builds the payment and the Pollar signer authorizes it.
+5. A Stellar facilitator verifies and settles the payment.
+6. Only after settlement does the service execute.
+7. The UI shows the settlement transaction and the amount spent.
 
-The x402 protocol itself is untouched, standard, spec-conformant
-`@x402/stellar` (`ExactStellarScheme`, x402 v2, CAIP-2 network IDs).
-The only new thing here is the signer: `lib/x402/pollar-signer.ts`
-implements x402's `ClientStellarSigner` interface on top of a Pollar
-session instead of a keypair. That's the whole pitch.
+## Paid services
 
-## How it works
+| Service | Price | Purpose |
+|---|---:|---|
+| Live Crypto Price | $0.01 | Current CoinGecko market data |
+| Live Weather | $0.01 | Current Open-Meteo conditions |
+| URL Fetch | $0.01 | Retrieve a public webpage for inspection |
+| Text Analysis | $0.02 | Words, characters, sentences and reading time |
 
-1. The agent calls a paid endpoint, e.g. `GET /api/tools/quote`.
-2. No `X-PAYMENT` header yet, so the server responds `402` with a
-   price quote (`PaymentRequirements`): asset, amount, destination,
-   timeout.
-3. The agent's x402 client builds a payment authorization, signs it
-   through the connected wallet (Pollar session or demo testnet
-   keypair), and retries with an `X-PAYMENT` header.
-4. The server hands the payload to an x402 **facilitator**
-   (`lib/x402/facilitator.server.ts`), which verifies the signed
-   authorization against Stellar and settles it on-chain. Facilitators
-   always sponsor the network fee, so the agent only ever needs USDC,
-   never XLM.
-5. Only after settlement does the server run the actual tool and
-   return the result, plus the transaction hash in
-   `X-PAYMENT-RESPONSE`.
+The external providers are intentionally simple. They are **not** the payment system: x402 payment happens first, then the provider is called.
 
-Every step above is the real `@x402/core` / `@x402/stellar` wire
-protocol, not a custom shortcut.
+## Architecture
 
-## Running it
+```
+Human
+  │
+  ▼
+Pollar embedded wallet
+  │
+  │ Pollar signer
+  ▼
+Agent client ──────► Paid service
+  │                       │
+  │ HTTP 402              │
+  ▼                       │
+x402 Stellar payment ─────┘
+  │
+  ▼
+Facilitator
+  │
+  ▼
+Stellar USDC settlement
+  │
+  ▼
+Service result + transaction hash
+```
 
-### 1. Install
+The key integration is `lib/x402/pollar-signer.ts`: it adapts Pollar's wallet signing methods to x402's `ClientStellarSigner` interface, so the agent does not need a raw Stellar secret key.
+
+## Local setup
 
 ```bash
 npm install
-```
-
-### 2. Get testnet funds
-
-You need a Stellar **testnet** account for the facilitator's treasury
-(pays network fees only, sponsored fees per spec) and, if you're using
-the demo wallet mode, a second one for the agent to spend from.
-
-```bash
-# generate a keypair
-node -e "console.log(require('@stellar/stellar-sdk').Keypair.random().secret())"
-```
-
-Fund it with XLM (for fees) via Friendbot:
-https://lab.stellar.org/account/fund
-
-Fund it with testnet USDC via the Circle faucet (select "Stellar",
-paste your `G...` address):
-https://faucet.circle.com/
-
-### 3. Configure
-
-```bash
 cp .env.example .env.local
-```
-
-Fill in:
-- `TREASURY_SECRET` - the facilitator's own testnet secret key (fees only)
-- `RECEIVING_ADDRESS` - where paid-for tool calls send USDC (can be the
-  same account's public key, or a separate one)
-- `NEXT_PUBLIC_POLLAR_API_KEY` - optional, from dashboard.pollar.xyz.
-  Without it the "Pollar wallet" tab is disabled but the app fully
-  works with the demo testnet-keypair signer.
-
-### 4. Run
-
-```bash
 npm run dev
 ```
 
-Open http://localhost:3000. Connect a wallet (demo keypair works
-immediately), set a session budget, and click "Pay & run" on any
-tool. Watch the ledger panel for the real Stellar transaction hash.
+Create two Stellar testnet accounts:
 
-## Project structure
+- **Treasury:** put its secret in `TREASURY_SECRET`; fund it with testnet XLM for facilitator fees.
+- **Agent:** fund it with testnet USDC; use its secret in the Demo keypair tab.
+
+Set `RECEIVING_ADDRESS` to the account that should receive settled USDC.
+
+For the real Pollar path, create a Pollar application and set `NEXT_PUBLIC_POLLAR_API_KEY`, then authenticate through the Pollar wallet option.
+
+## First test
+
+Use **Text Analysis** or **Live Weather** first. A successful run should show:
 
 ```
-lib/x402/
-  config.ts              network + paid tool catalog
-  facilitator.server.ts  in-process x402 facilitator (server-only)
-  requirements.server.ts builds PaymentRequirements per tool
-  pollar-signer.ts        <-- the actual differentiator
-  demo-signer.ts          raw-keypair fallback for immediate demoing
-  agent-client.ts         client-side: wraps fetch with payment + budget cap
-lib/tools/
-  registry.ts             the paid tool logic (no external API deps)
-app/api/tools/[tool]/
-  route.ts                the 402-gated endpoint
-components/
-  WalletSetup.tsx         demo keypair / Pollar wallet toggle
-  AgentConsole.tsx        tool trigger buttons
-  LedgerPanel.tsx         live settlement feed with stellar.expert links
-  SpendMeter.tsx          cumulative session budget cap
+402 quote
+  → wallet signs
+  → facilitator verifies
+  → Stellar settlement
+  → paid service executes
+  → transaction hash appears in ledger
 ```
 
-## What's real vs. what's a placeholder
+If payment fails, check the browser console and server terminal. Do not claim a payment is real until the returned transaction hash can be inspected on the Stellar testnet explorer.
 
-**Real and verified** (typechecked and built against the actual
-installed `@pollar/core`, `@x402/core`, `@x402/stellar` packages,
-zero errors):
-- The full 402 quote -> pay -> verify -> settle -> respond cycle
-- Correct `PaymentRequirements` construction (confirmed the exact
-  wire response including real testnet USDC contract address and
-  correctly-converted atomic amount)
-- The `PollarStellarSigner` adapter, matching `PollarClient`'s actual
-  `signAuthEntry` / `signTx` method signatures
+## Security model
 
-**Needs your Stellar testnet credentials to actually settle a
-payment** (verified up to but not past this point; my build sandbox
-has no internet access to Stellar's testnet RPC, so this is the first
-thing to test on your machine):
-- `facilitator.verify()` / `facilitator.settle()` actually talking to
-  Soroban RPC
-- The demo-keypair signer's `createEd25519Signer` producing a
-  signature Soroban RPC accepts
+- Agent code does not require the owner's raw private key when using Pollar.
+- Session spending is capped at the application layer.
+- A per-payment limit is enforced before the network request.
+- The facilitator treasury is server-side only.
+- The demo uses Stellar testnet by default.
 
-**Not wired up** (time-boxed out, listed in HANDOFF.md):
-- Passkey / smart-wallet (C-address) login path
-- Mainnet config (testnet only right now)
+## Submission focus
+
+**Problem:** AI agents increasingly need to purchase APIs and digital services, but giving an autonomous process a wallet key gives it unrestricted custody.
+
+**Solution:** AgentPay separates *authorization* from *execution*: Pollar owns the wallet session, the agent operates within explicit spending limits, and x402 handles machine-to-machine payment over Stellar.
+
+**Proof:** The settlement ledger records the actual x402 response and Stellar transaction returned by the facilitator.
+
+## Status
+
+The resource-server 402 path and x402 client integration are implemented. Live Stellar settlement and the Pollar-authenticated payment path must be verified with real testnet credentials before submission.

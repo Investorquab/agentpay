@@ -7,7 +7,11 @@ import type { ClientStellarSigner } from "@x402/stellar";
 import { createDemoSigner } from "@/lib/x402/demo-signer";
 import { PollarStellarSigner } from "@/lib/x402/pollar-signer";
 
-const HAS_POLLAR = Boolean(process.env.NEXT_PUBLIC_POLLAR_API_KEY);
+const POLLAR_PUBLISHABLE_KEY =
+  process.env.NEXT_PUBLIC_POLLAR_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_POLLAR_API_KEY;
+
+const HAS_POLLAR = Boolean(POLLAR_PUBLISHABLE_KEY);
 
 // usePollar() is only safe to call inside <Providers>, which only
 // mounts <PollarProvider> when a key is configured. We isolate the

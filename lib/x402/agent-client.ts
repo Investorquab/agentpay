@@ -70,6 +70,16 @@ export function createAgent(signer: ClientStellarSigner) {
           ? decodePaymentResponseHeader(settlementHeader)
           : undefined;
 
+        let reason: string | undefined;
+        if (!response.ok) {
+          try {
+            const body = await response.clone().json();
+            reason = body?.reason || body?.error || `HTTP ${response.status}`;
+          } catch {
+            reason = `HTTP ${response.status}`;
+          }
+        }
+
         return {
           response,
           entry: {
@@ -79,6 +89,7 @@ export function createAgent(signer: ClientStellarSigner) {
             status: response.ok ? "paid" : "failed",
             transaction: settlement?.transaction,
             network: settlement?.network,
+            reason,
             at: Date.now(),
           },
         };

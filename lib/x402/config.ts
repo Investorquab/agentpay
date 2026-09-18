@@ -1,9 +1,9 @@
 /**
  * AgentPay service catalog. Every service is protected by x402.
  */
-export const STELLAR_NETWORK =
-  (process.env.NEXT_PUBLIC_X402_NETWORK as "stellar:testnet" | "stellar:pubnet") ??
-  "stellar:testnet";
+
+const configuredNetwork = process.env.NEXT_PUBLIC_X402_NETWORK;
+export const STELLAR_NETWORK = configuredNetwork === "stellar:pubnet" ? "stellar:pubnet" : "stellar:testnet";
 
 export const RECEIVING_ADDRESS = process.env.RECEIVING_ADDRESS ?? "";
 

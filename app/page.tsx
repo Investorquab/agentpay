@@ -12,7 +12,7 @@ import { LedgerPanel } from "@/components/LedgerPanel";
 export default function Home() {
   const [signer, setSigner] = useState<ClientStellarSigner | null>(null);
   const [address, setAddress] = useState<string | null>(null);
-  const [budget, setBudget] = useState<AgentBudget>({ capUsd: 0.1, spentUsd: 0 });
+  const [budget, setBudget] = useState<AgentBudget>({ capUsd: 0.10, spentUsd: 0, maxPaymentUsd: 0.03 });
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [busyToolId, setBusyToolId] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<unknown>(null);
@@ -20,79 +20,49 @@ export default function Home() {
   async function handleRunTool(tool: ToolDefinition, input: Record<string, string>) {
     if (!signer) return;
     setBusyToolId(tool.id);
-
-    const agent = createAgent(signer);
-    const params = new URLSearchParams(input);
-    const url = `/api/tools/${tool.id}?${params.toString()}`;
-    const priceUsd = Number(tool.price);
-
-    const { response, entry } = await agent.callTool(url, priceUsd, budget);
-
-    setEntries((prev) => [entry, ...prev]);
-    if (entry.status === "paid") {
-      setBudget((b) => ({ ...b, spentUsd: b.spentUsd + priceUsd }));
-      try {
-        setLastResult(await response.json());
-      } catch {
-        setLastResult(null);
+    try {
+      const agent = createAgent(signer);
+      const params = new URLSearchParams(input);
+      const result = await agent.callTool("/api/tools/" + tool.id + "?" + params.toString(), Number(tool.price), budget);
+      setEntries(prev => [result.entry, ...prev]);
+      if (result.entry.status === "paid") {
+        setBudget(b => ({ ...b, spentUsd: b.spentUsd + Number(tool.price) }));
+        try { setLastResult(await result.response.json()); } catch { setLastResult(null); }
       }
+    } finally {
+      setBusyToolId(null);
     }
-    setBusyToolId(null);
   }
 
   return (
     <main className="flex-1 flex flex-col max-w-6xl w-full mx-auto px-6 py-8 gap-6">
       <header className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Agent<span className="accent-text">Pay</span>
-          </h1>
-          <p className="text-sm dim-text mt-1">
-            An AI agent with its own non-custodial wallet, paying per request over x402 on
-            Stellar. The wallet is a Pollar session, not a private key sitting in an env file.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Agent<span className="accent-text">Pay</span></h1>
+          <p className="text-sm dim-text mt-1 max-w-2xl">Give an AI agent spending power without giving it your private key. Pollar controls the wallet; x402 settles each service purchase on Stellar.</p>
         </div>
-        {address && (
-          <div className="text-xs mono dim-text panel px-3 py-1.5">
-            {address.slice(0, 6)}...{address.slice(-6)}
-          </div>
-        )}
+        {address && <div className="text-xs mono dim-text panel px-3 py-1.5">{address.slice(0, 6)}...{address.slice(-6)}</div>}
       </header>
-
       <div className="scanline-divider" />
-
       <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-6 flex-1 min-h-0">
         <div className="flex flex-col gap-4">
-          <WalletSetup
-            onReady={(s, addr) => {
-              setSigner(s);
-              setAddress(addr);
-            }}
-          />
+          <WalletSetup onReady={(s, addr) => { setSigner(s); setAddress(addr); }} />
           <SpendMeter
             spentUsd={budget.spentUsd}
             capUsd={budget.capUsd}
-            onCapChange={(v) => setBudget((b) => ({ ...b, capUsd: v }))}
+            maxPaymentUsd={budget.maxPaymentUsd}
+            onCapChange={v => setBudget(b => ({...b, capUsd:v}))}
+            onMaxPaymentChange={v => setBudget(b => ({...b, maxPaymentUsd:v}))}
           />
-          <AgentConsole
-            connected={Boolean(signer)}
-            busyToolId={busyToolId}
-            onRunTool={handleRunTool}
-          />
-
+          <AgentConsole connected={Boolean(signer)} busyToolId={busyToolId} onRunTool={handleRunTool} />
           {lastResult !== null && (
             <div className="panel p-4">
-              <span className="text-xs uppercase tracking-widest dim-text">Last result</span>
-              <pre className="mono text-xs mt-2 overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(lastResult, null, 2)}
-              </pre>
+              <span className="text-xs uppercase tracking-widest dim-text">Service result</span>
+              <pre className="mono text-xs mt-2 overflow-x-auto whitespace-pre-wrap">{JSON.stringify(lastResult, null, 2)}</pre>
             </div>
           )}
         </div>
-
-        <div className="min-h-[420px] lg:min-h-0">
-          <LedgerPanel entries={entries} />
-        </div>
+        <div className="min-h-[420px] lg:min-h-0"><LedgerPanel entries={entries} /></div>
       </div>
     </main>
   );

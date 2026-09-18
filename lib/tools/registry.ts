@@ -1,60 +1,67 @@
 import "server-only";
 import type { ToolId } from "@/lib/x402/config";
 
-/**
- * Actual tool logic, called only after a payment has verified and
- * settled. Kept dependency-free (no outbound fetches) so the demo
- * never breaks on a flaky third-party API mid-pitch.
- */
-
-const JOKES = [
-  "There are only 10 types of people: those who understand binary and those who don't.",
-  "A SQL query walks into a bar, walks up to two tables and asks: 'Can I join you?'",
-  "Why do programmers prefer dark mode? Because light attracts bugs.",
-  "It's not a bug, it's an undocumented feature.",
-  "!false — it's funny because it's true.",
-];
-
-const WEATHER_CONDITIONS = ["Clear", "Partly cloudy", "Overcast", "Light rain", "Windy"];
-
-function seededPick<T>(list: T[], seed: string): T {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return list[h % list.length];
+async function liveCrypto(symbol: string) {
+  const id = symbol.toLowerCase().trim();
+  const response = await fetch(
+    `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=usd&include_24hr_change=true`,
+    { cache: "no-store" }
+  );
+  if (!response.ok) throw new Error(`Market data provider returned HTTP ${response.status}`);
+  const data = await response.json();
+  if (!data[id]) throw new Error(`Unknown CoinGecko asset: ${id}`);
+  return { asset: id, priceUsd: data[id].usd, change24hPct: data[id].usd_24h_change ?? null, source: "CoinGecko", asOf: new Date().toISOString() };
 }
 
-export function runTool(id: ToolId, input: Record<string, string>) {
+async function liveWeather(city: string) {
+  const geo = new URL("https://geocoding-api.open-meteo.com/v1/search");
+  geo.searchParams.set("name", city);
+  geo.searchParams.set("count", "1");
+  geo.searchParams.set("language", "en");
+  geo.searchParams.set("format", "json");
+  const geoResponse = await fetch(geo, { cache: "no-store" });
+  if (!geoResponse.ok) throw new Error(`Geocoding provider returned HTTP ${geoResponse.status}`);
+  const place = (await geoResponse.json()).results?.[0];
+  if (!place) throw new Error(`City not found: ${city}`);
+
+  const weather = new URL("https://api.open-meteo.com/v1/forecast");
+  weather.searchParams.set("latitude", String(place.latitude));
+  weather.searchParams.set("longitude", String(place.longitude));
+  weather.searchParams.set("current", "temperature_2m,weather_code,wind_speed_10m");
+  weather.searchParams.set("timezone", "auto");
+  const response = await fetch(weather, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Weather provider returned HTTP ${response.status}`);
+  const current = (await response.json()).current;
+  return { city: place.name, country: place.country, temperatureC: current?.temperature_2m, windSpeedKmh: current?.wind_speed_10m, weatherCode: current?.weather_code, source: "Open-Meteo", asOf: current?.time ?? new Date().toISOString() };
+}
+
+async function fetchUrl(value: string) {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("Invalid URL"); }
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Only HTTP(S) URLs are allowed");
+  const response = await fetch(url, { redirect: "follow", cache: "no-store", headers: { "user-agent": "AgentPay/0.1" } });
+  if (!response.ok) throw new Error(`URL returned HTTP ${response.status}`);
+  const raw = await response.text();
+  const content = raw.replace(/<script[\\s\\S]*?<\\/script>/gi, " ").replace(/<style[\\s\\S]*?<\\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim();
+  return { url: url.toString(), status: response.status, contentType: response.headers.get("content-type") ?? "", content: content.slice(0, 5000), truncated: content.length > 5000, fetchedAt: new Date().toISOString() };
+}
+
+function required(input: Record<string, string>, key: string) {
+  const value = input[key]?.trim();
+  if (!value) throw new Error(`Missing required input: ${key}`);
+  return value;
+}
+
+export async function runTool(id: ToolId, input: Record<string, string>) {
   switch (id) {
-    case "quote": {
-      const symbol = (input.symbol || "STLR").toUpperCase();
-      const base = seededPick([12.4, 88.1, 231.6, 3.02, 55.9], symbol);
-      const drift = ((Date.now() / 1000) % 100) / 100 - 0.5;
-      const price = Math.max(0.01, base * (1 + drift * 0.02));
-      return {
-        symbol,
-        price: Number(price.toFixed(2)),
-        currency: "USD",
-        asOf: new Date().toISOString(),
-      };
-    }
-    case "weather": {
-      const city = input.city || "Lagos";
-      const condition = seededPick(WEATHER_CONDITIONS, city + new Date().toDateString());
-      const tempC = 18 + (city.length % 15);
-      return { city, condition, tempC, asOf: new Date().toISOString() };
-    }
-    case "joke": {
-      const joke = JOKES[Math.floor(Math.random() * JOKES.length)];
-      return { joke };
-    }
+    case "crypto": return liveCrypto(required(input, "symbol"));
+    case "weather": return liveWeather(required(input, "city"));
+    case "url": return fetchUrl(required(input, "url"));
     case "wordcount": {
       const text = input.text || "";
-      const words = text.trim().length ? text.trim().split(/\s+/).length : 0;
-      const chars = text.length;
-      const readingTimeSec = Math.max(1, Math.round((words / 200) * 60));
-      return { words, chars, readingTimeSec };
+      const words = text.trim() ? text.trim().split(/\\s+/).length : 0;
+      const sentences = text.trim() ? (text.match(/[.!?]+(?=\\s|$)/g) ?? []).length : 0;
+      return { words, chars: text.length, sentences, readingTimeSec: Math.max(1, Math.round((words / 200) * 60)) };
     }
-    default:
-      throw new Error(`Unknown tool: ${id}`);
   }
 }

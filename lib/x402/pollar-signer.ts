@@ -1,80 +1,154 @@
 import type { ClientStellarSigner } from "@x402/stellar";
 import type { PollarClient } from "@pollar/core";
-import { rpc } from "@stellar/stellar-sdk";
+import { Address, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
 
 /**
- * Bridges a Pollar embedded wallet into x402's ClientStellarSigner
- * interface (address + signAuthEntry + optional signTransaction).
+ * Bridges a Pollar embedded wallet into x402's ClientStellarSigner.
+ *
+ * Important: x402's Stellar SDK callback passes a HashIdPreimage XDR to the
+ * signer, while Pollar's signAuthEntry API expects a full
+ * SorobanAuthorizationEntry XDR and returns the signed entry. This adapter
+ * converts between those two wallet interfaces:
+ *
+ *   x402 preimage -> Pollar auth entry -> Pollar signed auth entry
+ *      -> raw Ed25519 signature -> x402
  *
  * The agent never receives a private key. Pollar owns the authenticated
  * wallet session and performs the actual signing operation.
- *
- * Pollar's signAuthEntry API accepts base64 XDR. x402/Stellar SDK versions
- * can hand a signer an XDR object/string produced by a different SDK copy,
- * so normalize the authorization entry through our pinned Stellar SDK before
- * sending it to Pollar. This keeps the Pollar wire payload canonical.
  */
 export class PollarStellarSigner implements ClientStellarSigner {
-  private readonly rpcUrl: string;
-
   constructor(
     private readonly client: PollarClient,
     /** The wallet's Stellar public address (G... or C...). */
     public readonly address: string,
-    rpcUrl = "https://soroban-testnet.stellar.org"
-  ) {
-    this.rpcUrl = rpcUrl;
-  }
+  ) {}
 
-  private async currentLedger(): Promise<number> {
-    const server = new rpc.Server(this.rpcUrl);
-    const { sequence } = await server.getLatestLedger();
-    return sequence;
-  }
+  private buildAuthEntryFromPreimage(preimageXdr: string): {
+    entry: xdr.SorobanAuthorizationEntry;
+    validUntilLedger: number;
+  } {
+    const preimage = xdr.HashIdPreimage.fromXDR(preimageXdr, "base64");
+    const type = preimage.switch().value;
 
-  private normalizeAuthEntryXdr(authEntry: unknown): string {
-    // Pollar expects the canonical base64 XDR wire payload. Do not decode and
-    // re-encode the entry here: the x402/Stellar SDK already produced the
-    // protocol-correct XDR, and an older decoder can reject a newer auth-entry
-    // credential arm before Pollar ever receives it.
-    if (typeof authEntry === "string") {
-      return authEntry;
+    if (
+      type ===
+      xdr.HashIDPreimageType.envelopeTypeSorobanAuthorization().value
+    ) {
+      const auth = preimage.sorobanAuthorization();
+      const credentials = new xdr.SorobanAddressCredentials({
+        address: new Address(this.address).toScAddress(),
+        nonce: auth.nonce(),
+        signatureExpirationLedger: auth.signatureExpirationLedger(),
+        signature: xdr.ScVal.scvVoid(),
+      });
+
+      return {
+        entry: new xdr.SorobanAuthorizationEntry({
+          credentials:
+            xdr.SorobanCredentials.sorobanCredentialsAddress(credentials),
+          rootInvocation: auth.invocation(),
+        }),
+        validUntilLedger: auth.signatureExpirationLedger(),
+      };
     }
 
     if (
-      typeof authEntry === "object" &&
-      authEntry !== null &&
-      "toXDR" in authEntry &&
-      typeof (authEntry as { toXDR?: unknown }).toXDR === "function"
+      type ===
+      xdr.HashIDPreimageType.envelopeTypeSorobanAuthorizationWithAddress()
+        .value
     ) {
-      return (authEntry as { toXDR: (format: "base64") => string }).toXDR("base64");
+      const auth = preimage.sorobanAuthorizationWithAddress();
+      const credentials = new xdr.SorobanAddressCredentials({
+        address: auth.address(),
+        nonce: auth.nonce(),
+        signatureExpirationLedger: auth.signatureExpirationLedger(),
+        signature: xdr.ScVal.scvVoid(),
+      });
+
+      return {
+        entry: new xdr.SorobanAuthorizationEntry({
+          credentials:
+            xdr.SorobanCredentials.sorobanCredentialsAddressV2(credentials),
+          rootInvocation: auth.invocation(),
+        }),
+        validUntilLedger: auth.signatureExpirationLedger(),
+      };
     }
 
-    throw new Error("x402 returned an unsupported Soroban authorization entry format");
+    throw new Error(
+      "x402 returned an unsupported Stellar authorization preimage type",
+    );
   }
 
-  signAuthEntry: ClientStellarSigner["signAuthEntry"] = async (authEntry) => {
-    const ledger = await this.currentLedger();
-    const validUntilLedger = ledger + 60;
-    const entryXdr = this.normalizeAuthEntryXdr(authEntry);
+  private extractRawSignature(signedEntryXdr: string): string {
+    const signedEntry = xdr.SorobanAuthorizationEntry.fromXDR(
+      signedEntryXdr,
+      "base64",
+    );
 
-    const outcome = await this.client.signAuthEntry(entryXdr, { validUntilLedger });
+    const credentials = signedEntry.credentials();
+    const type = credentials.switch().value;
+
+    let signatureScVal: xdr.ScVal;
+
+    if (
+      type === xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
+    ) {
+      signatureScVal = credentials.address().signature();
+    } else if (
+      type ===
+      xdr.SorobanCredentialsType.sorobanCredentialsAddressV2().value
+    ) {
+      signatureScVal = credentials.addressV2().signature();
+    } else {
+      throw new Error(
+        "Pollar returned an unsupported Soroban credential type",
+      );
+    }
+
+    const native = scValToNative(signatureScVal) as
+      | Array<{ public_key?: Uint8Array; signature?: Uint8Array }>
+      | null;
+
+    const signature = native?.[0]?.signature;
+
+    if (!(signature instanceof Uint8Array) || signature.length === 0) {
+      throw new Error("Pollar returned an auth entry without a raw signature");
+    }
+
+    return Buffer.from(signature).toString("base64");
+  }
+
+  signAuthEntry: ClientStellarSigner["signAuthEntry"] = async (preimageXdr) => {
+    const { entry, validUntilLedger } =
+      this.buildAuthEntryFromPreimage(preimageXdr);
+
+    const outcome = await this.client.signAuthEntry(
+      entry.toXDR("base64"),
+      { validUntilLedger },
+    );
 
     if (outcome.status === "error") {
-      throw new Error(outcome.details ?? "Pollar wallet declined to sign the payment");
+      throw new Error(
+        outcome.details ?? "Pollar wallet declined to sign the payment",
+      );
     }
 
     return {
-      signedAuthEntry: outcome.signedAuthEntry,
+      // x402's SDK callback expects the raw signature bytes encoded as base64
+      // here; it wraps those bytes into the Soroban signature ScVal itself.
+      signedAuthEntry: this.extractRawSignature(outcome.signedAuthEntry),
       signerAddress: this.address,
     };
   };
 
-  signTransaction: ClientStellarSigner["signTransaction"] = async (xdr) => {
-    const outcome = await this.client.signTx(xdr);
+  signTransaction: ClientStellarSigner["signTransaction"] = async (txXdr) => {
+    const outcome = await this.client.signTx(txXdr);
 
     if (outcome.status === "error") {
-      throw new Error(outcome.details ?? "Pollar wallet declined to sign the transaction");
+      throw new Error(
+        outcome.details ?? "Pollar wallet declined to sign the transaction",
+      );
     }
 
     return { signedTxXdr: outcome.signedXdr };

@@ -6,21 +6,11 @@ import { rpc } from "@stellar/stellar-sdk";
  * Bridges a Pollar embedded wallet into x402's ClientStellarSigner
  * interface (address + signAuthEntry + optional signTransaction).
  *
- * This is the actual point of the project: every other Stellar x402
- * agent wallet in the wild holds a raw secret key (`S...`) in an env
- * var or in memory. Here the agent's wallet is a real Pollar session
- * -- the human owner authenticated once (Google / passkey / email
- * OTP), Pollar holds the DPoP-bound session, and every payment this
- * signer makes is a signature the owner can revoke from any device
- * via `client.logoutEverywhere()` or `client.revokeSession()`. The
- * agent process itself never sees a private key at any point.
+ * The agent never receives a private key. Pollar owns the authenticated
+ * wallet session and performs the actual signing operation.
  *
- * `PollarClient.signAuthEntry` asks for `validUntilLedger` rather than
- * a network passphrase, because for custodial wallets Pollar's backend
- * independently validates and caps how far in the future the
- * authorization can expire (defense against an over-broad grant). We
- * compute it here from the current ledger via Soroban RPC, capped to
- * a short window appropriate for a single per-request payment.
+ * Pollar validates and caps auth-entry validity server-side. We therefore
+ * use a short, single-payment window rather than a long-lived authorization.
  */
 export class PollarStellarSigner implements ClientStellarSigner {
   private readonly rpcUrl: string;
@@ -42,9 +32,10 @@ export class PollarStellarSigner implements ClientStellarSigner {
 
   signAuthEntry: ClientStellarSigner["signAuthEntry"] = async (authEntry) => {
     const ledger = await this.currentLedger();
-    // ~10 minutes of validity at ~5s per ledger -- generous for a
-    // single interactive payment, short enough to bound the grant.
-    const validUntilLedger = ledger + 120;
+
+    // Keep the auth grant within a short window. Pollar also enforces
+    // its own server-side maximum validity for embedded-wallet signing.
+    const validUntilLedger = ledger + 60;
 
     const outcome = await this.client.signAuthEntry(authEntry, { validUntilLedger });
 

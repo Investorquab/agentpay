@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Keypair } from "@stellar/stellar-sdk";
 import { usePollar } from "@pollar/react";
 import type { ClientStellarSigner } from "@x402/stellar";
@@ -21,8 +21,15 @@ function PollarWalletOption({ onSigner }: { onSigner: (s: ClientStellarSigner, a
   // where <PollarProvider> is guaranteed to be mounted.
   const { wallet, isAuthenticated, login, getClient, logout } = usePollar();
 
+  // A successful Pollar login already gives us the wallet we need. Select it
+  // automatically so the user does not have to click a second "Use this wallet"
+  // button before the agent can make a payment.
+  useEffect(() => {
+    if (!isAuthenticated || !wallet) return;
+    onSigner(new PollarStellarSigner(getClient(), wallet.address), wallet.address);
+  }, [isAuthenticated, wallet, getClient, onSigner]);
+
   if (isAuthenticated && wallet) {
-    const signer = new PollarStellarSigner(getClient(), wallet.address);
     return (
       <div className="flex items-center justify-between panel-raised px-3 py-2.5">
         <div>
@@ -32,13 +39,12 @@ function PollarWalletOption({ onSigner }: { onSigner: (s: ClientStellarSigner, a
           </div>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => onSigner(signer, wallet.address)}
+          <span
             className="text-xs px-3 py-1.5 rounded font-medium"
             style={{ background: "var(--accent)", color: "#0a0d0a" }}
           >
-            Use this wallet
-          </button>
+            Wallet selected
+          </span>
           <button onClick={() => logout()} className="text-xs px-3 py-1.5 rounded dim-text panel">
             Sign out
           </button>

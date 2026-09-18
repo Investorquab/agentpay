@@ -33,8 +33,12 @@ export class PollarStellarSigner implements ClientStellarSigner {
   }
 
   private normalizeAuthEntryXdr(authEntry: unknown): string {
+    // Pollar expects the canonical base64 XDR wire payload. Do not decode and
+    // re-encode the entry here: the x402/Stellar SDK already produced the
+    // protocol-correct XDR, and an older decoder can reject a newer auth-entry
+    // credential arm before Pollar ever receives it.
     if (typeof authEntry === "string") {
-      return xdr.SorobanAuthorizationEntry.fromXDR(authEntry, "base64").toXDR("base64");
+      return authEntry;
     }
 
     if (
@@ -43,8 +47,7 @@ export class PollarStellarSigner implements ClientStellarSigner {
       "toXDR" in authEntry &&
       typeof (authEntry as { toXDR?: unknown }).toXDR === "function"
     ) {
-      const raw = (authEntry as { toXDR: (format: "base64") => string }).toXDR("base64");
-      return xdr.SorobanAuthorizationEntry.fromXDR(raw, "base64").toXDR("base64");
+      return (authEntry as { toXDR: (format: "base64") => string }).toXDR("base64");
     }
 
     throw new Error("x402 returned an unsupported Soroban authorization entry format");

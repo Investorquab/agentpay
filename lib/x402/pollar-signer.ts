@@ -1,6 +1,6 @@
 import type { ClientStellarSigner } from "@x402/stellar";
 import type { PollarClient } from "@pollar/core";
-import { Address, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
+import { Address, scValToNative, xdr } from "@stellar/stellar-sdk";
 
 /**
  * Bridges a Pollar embedded wallet into x402's ClientStellarSigner.
@@ -32,7 +32,7 @@ export class PollarStellarSigner implements ClientStellarSigner {
 
     if (
       type ===
-      xdr.HashIDPreimageType.envelopeTypeSorobanAuthorization().value
+      xdr.EnvelopeType.envelopeTypeSorobanAuthorization().value
     ) {
       const auth = preimage.sorobanAuthorization();
       const credentials = new xdr.SorobanAddressCredentials({
@@ -54,7 +54,7 @@ export class PollarStellarSigner implements ClientStellarSigner {
 
     if (
       type ===
-      xdr.HashIDPreimageType.envelopeTypeSorobanAuthorizationWithAddress()
+      xdr.EnvelopeType.envelopeTypeSorobanAuthorizationWithAddress()
         .value
     ) {
       const auth = preimage.sorobanAuthorizationWithAddress();

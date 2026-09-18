@@ -57,7 +57,7 @@ The key integration is `lib/x402/pollar-signer.ts`: it adapts Pollar's wallet si
 
 ```bash
 npm install
-cp .env.example .env.local
+cp .env.example .env
 npm run dev
 ```
 
@@ -68,7 +68,7 @@ Create two Stellar testnet accounts:
 
 Set `RECEIVING_ADDRESS` to the account that should receive settled USDC.
 
-For the real Pollar path, create a Pollar application and set `NEXT_PUBLIC_POLLAR_API_KEY`, then authenticate through the Pollar wallet option.
+For the real Pollar path, create a Pollar application and set `NEXT_PUBLIC_POLLAR_PUBLISHABLE_KEY`, then authenticate through the Pollar wallet option.
 
 ## First test
 

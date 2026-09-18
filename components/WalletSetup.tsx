@@ -38,17 +38,9 @@ function PollarWalletOption({ onSigner }: { onSigner: (s: ClientStellarSigner, a
             {wallet.address.slice(0, 6)}...{wallet.address.slice(-6)}
           </div>
         </div>
-        <div className="flex gap-2">
-          <span
-            className="text-xs px-3 py-1.5 rounded font-medium"
-            style={{ background: "var(--accent)", color: "#0a0d0a" }}
-          >
-            Wallet selected
-          </span>
-          <button onClick={() => logout()} className="text-xs px-3 py-1.5 rounded dim-text panel">
-            Sign out
-          </button>
-        </div>
+        <button onClick={() => logout()} className="text-xs px-3 py-1.5 rounded dim-text panel">
+          Sign out
+        </button>
       </div>
     );
   }

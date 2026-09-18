@@ -1,6 +1,6 @@
 import type { ClientStellarSigner } from "@x402/stellar";
 import type { PollarClient } from "@pollar/core";
-import { rpc, xdr } from "@stellar/stellar-sdk";
+import { rpc } from "@stellar/stellar-sdk";
 
 /**
  * Bridges a Pollar embedded wallet into x402's ClientStellarSigner

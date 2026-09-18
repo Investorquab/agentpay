@@ -8,35 +8,75 @@ import { runTool } from "@/lib/tools/registry";
 
 export const runtime = "nodejs";
 
+function serverError(error: unknown) {
+  const message = error instanceof Error ? error.message : "unknown server error";
+  return NextResponse.json({ error: "server_configuration_error", message }, { status: 500 });
+}
+
 async function handle(req: NextRequest, toolId: string) {
   const tool = getTool(toolId);
   if (!tool) return NextResponse.json({ error: "unknown tool" }, { status: 404 });
 
-  const requirements = await buildRequirements(tool);
+  let requirements;
+  try {
+    requirements = await buildRequirements(tool);
+  } catch (error) {
+    return serverError(error);
+  }
+
   const paymentHeader = req.headers.get("X-PAYMENT");
 
   if (!paymentHeader) {
-    const paymentRequired = { x402Version: 2 as const, resource: { url: req.nextUrl.pathname, description: tool.description }, accepts: [requirements] };
+    const paymentRequired = {
+      x402Version: 2 as const,
+      resource: { url: req.nextUrl.pathname, description: tool.description },
+      accepts: [requirements],
+    };
     const res = NextResponse.json(paymentRequired, { status: 402 });
     res.headers.set("PAYMENT-REQUIRED", encodePaymentRequiredHeader(paymentRequired));
     return res;
   }
 
   let payload: PaymentPayload;
-  try { payload = decodePaymentSignatureHeader(paymentHeader); }
-  catch { return NextResponse.json({ error: "malformed X-PAYMENT header" }, { status: 400 }); }
+  try {
+    payload = decodePaymentSignatureHeader(paymentHeader);
+  } catch {
+    return NextResponse.json({ error: "malformed X-PAYMENT header" }, { status: 400 });
+  }
 
-  const facilitator = getFacilitator();
-  const verify = await facilitator.verify(payload, requirements);
-  if (!verify.isValid) return NextResponse.json({ error: "payment_invalid", reason: verify.invalidReason }, { status: 402 });
+  let facilitator;
+  try {
+    facilitator = getFacilitator();
+  } catch (error) {
+    return serverError(error);
+  }
 
-  const settle = await facilitator.settle(payload, requirements);
-  if (!settle.success) return NextResponse.json({ error: "settlement_failed", reason: settle.errorReason }, { status: 402 });
+  let verify;
+  try {
+    verify = await facilitator.verify(payload, requirements);
+  } catch (error) {
+    return serverError(error);
+  }
+  if (!verify.isValid) {
+    return NextResponse.json({ error: "payment_invalid", reason: verify.invalidReason }, { status: 402 });
+  }
+
+  let settle;
+  try {
+    settle = await facilitator.settle(payload, requirements);
+  } catch (error) {
+    return serverError(error);
+  }
+  if (!settle.success) {
+    return NextResponse.json({ error: "settlement_failed", reason: settle.errorReason }, { status: 402 });
+  }
 
   try {
     const result = await runTool(tool.id, Object.fromEntries(req.nextUrl.searchParams.entries()));
     const res = NextResponse.json({
-      tool: tool.id, price: tool.price, result,
+      tool: tool.id,
+      price: tool.price,
+      result,
       settlement: { transaction: settle.transaction, network: settle.network, payer: settle.payer },
     });
     res.headers.set("X-PAYMENT-RESPONSE", encodePaymentResponseHeader(settle));

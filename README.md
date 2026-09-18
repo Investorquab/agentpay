@@ -104,3 +104,5 @@ If payment fails, check the browser console and server terminal. Do not claim a 
 ## Status
 
 The resource-server 402 path and x402 client integration are implemented. Live Stellar settlement and the Pollar-authenticated payment path must be verified with real testnet credentials before submission.
+
+<!-- deployment trigger: 2026-09-18 -->
